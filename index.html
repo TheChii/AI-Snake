@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AI Snake</title>
+    <style>
+        :root {
+            --bg-color: #1a1a1a;
+            --card-bg: #2d2d2d;
+            --text-color: #ffffff;
+            --primary: #00ff88;
+            --secondary: #696969;
+        }
+
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 2rem;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        canvas {
+            border-radius: 8px;
+            background: #000;
+        }
+
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            margin: 1rem 0;
+        }
+
+        .param-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            min-width: 180px;
+        }
+
+        input[type="range"], input[type="number"] {
+            width: 100%;
+            accent-color: var(--primary);
+        }
+
+        button {
+            background: var(--primary);
+            color: #000;
+            border: none;
+            padding: 0.8rem 1.5rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: opacity 0.2s;
+        }
+
+        button:hover {
+            opacity: 0.8;
+        }
+
+        .model-management {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        select {
+            background: var(--secondary);
+            color: white;
+            border: none;
+            padding: 0.5rem;
+            border-radius: 4px;
+        }
+
+        .stats {
+            display: grid;
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+
+        .stats span {
+            color: var(--primary);
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <h2>Model Management</h2>
+            <div class="model-management">
+                <input type="text" id="modelName" placeholder="Model name" style="flex:1">
+                <button onclick="saveModel()">💾 Save</button>
+                <select id="savedModels" onchange="loadModel(this.value)"></select>
+            </div>
+            
+            <div class="controls">
+                <div class="param-group">
+                    <label>α (Learning Rate)</label>
+                    <input type="number" id="alpha" min="0" max="1" step="0.01" value="0.1">
+                </div>
+                <div class="param-group">
+                    <label>γ (Discount Factor)</label>
+                    <input type="number" id="gamma" min="0" max="1" step="0.01" value="0.9">
+                </div>
+                <div class="param-group">
+                    <label>ε (Exploration)</label>
+                    <input type="number" id="epsilon" min="0" max="1" step="0.01" value="0">
+                </div>
+                <div class="param-group">
+                    <label>ε Decay</label>
+                    <input type="number" id="epsilonDecay" min="0.9" max="0.999" step="0.001" value="0.995">
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Training Mode</h2>
+            <div class="controls">
+                <div class="param-group">
+                    <label>Speed</label>
+                    <input type="range" id="trainSpeed" min="1" max="100" value="50">
+                </div>
+            </div>
+            <canvas id="gameCanvas" width="400" height="400"></canvas>
+            <div class="stats">
+                <div>Score: <span id="score">0</span></div>
+                <div>High Score: <span id="highScore">0</span></div>
+                <div>Games Played: <span id="gamesPlayed">0</span></div>
+                <div>Current ε: <span id="epsilonValue">0.00</span></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Play Mode</h2>
+            <div class="controls">
+                <button id="playButton">▶ Start Play</button>
+                <div class="param-group">
+                    <label>Speed</label>
+                    <input type="range" id="playSpeed" min="50" max="500" value="200">
+                </div>
+            </div>
+            <canvas id="playCanvas" width="400" height="400"></canvas>
+            <div class="stats">
+                <div>Score: <span id="playScore">0</span></div>
+                <div>High Score: <span id="playHighScore">0</span></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class SnakeGame {
+            constructor(canvas, gridSize = 20) {
+                this.canvas = canvas;
+                this.ctx = canvas.getContext('2d');
+                this.gridSize = gridSize;
+                this.reset();
+            }
+
+            reset() {
+                this.snake = [{x: 10, y: 10}];
+                this.food = this.generateFood();
+                this.dx = 1;
+                this.dy = 0;
+                this.score = 0;
+                this.gameOver = false;
+            }
+
+            generateFood() {
+                while(true) {
+                    const food = {
+                        x: Math.floor(Math.random() * (this.canvas.width / this.gridSize)),
+                        y: Math.floor(Math.random() * (this.canvas.height / this.gridSize))
+                    };
+                    if (!this.snake.some(segment => segment.x === food.x && segment.y === food.y)) {
+                        return food;
+                    }
+                }
+            }
+
+            getState() {
+                const head = this.snake[0];
+                const state = {
+                    dangerUp: head.y === 0 || this.snake.some(segment => segment.x === head.x && segment.y === head.y - 1),
+                    dangerDown: head.y === (this.canvas.height / this.gridSize) - 1 || this.snake.some(segment => segment.x === head.x && segment.y === head.y + 1),
+                    dangerLeft: head.x === 0 || this.snake.some(segment => segment.x === head.x - 1 && segment.y === head.y),
+                    dangerRight: head.x === (this.canvas.width / this.gridSize) - 1 || this.snake.some(segment => segment.x === head.x + 1 && segment.y === head.y),
+                    foodUp: head.y > this.food.y,
+                    foodDown: head.y < this.food.y,
+                    foodLeft: head.x > this.food.x,
+                    foodRight: head.x < this.food.x,
+                    dirUp: this.dy === -1,
+                    dirDown: this.dy === 1,
+                    dirLeft: this.dx === -1,
+                    dirRight: this.dx === 1
+                };
+                return Object.values(state).map(Number).join('');
+            }
+
+            step(action) {
+                if (this.gameOver) return -10;
+
+                const directions = [
+                    [-1, 0], [1, 0], [0, -1], [0, 1]
+                ];
+                
+                const [newDx, newDy] = directions[action];
+                if (this.dx + newDx !== 0 || this.dy + newDy !== 0) {
+                    this.dx = newDx;
+                    this.dy = newDy;
+                }
+
+                const newHead = {
+                    x: this.snake[0].x + this.dx,
+                    y: this.snake[0].y + this.dy
+                };
+
+                if (newHead.x < 0 || newHead.x >= this.canvas.width / this.gridSize ||
+                    newHead.y < 0 || newHead.y >= this.canvas.height / this.gridSize ||
+                    this.snake.some(segment => segment.x === newHead.x && segment.y === newHead.y)) {
+                    this.gameOver = true;
+                    return -10;
+                }
+
+                this.snake.unshift(newHead);
+
+                if (newHead.x === this.food.x && newHead.y === this.food.y) {
+                    this.score += 1;
+                    this.food = this.generateFood();
+                    return 10;
+                }
+
+                this.snake.pop();
+                return -0.1;
+            }
+
+            draw() {
+                this.ctx.fillStyle = 'black';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+                this.snake.forEach((segment, index) => {
+                    this.ctx.fillStyle = index === 0 ? '#00ff88' : '#007a46';
+                    this.ctx.fillRect(
+                        segment.x * this.gridSize,
+                        segment.y * this.gridSize,
+                        this.gridSize - 2,
+                        this.gridSize - 2
+                    );
+                });
+
+                this.ctx.fillStyle = 'red';
+                this.ctx.fillRect(
+                    this.food.x * this.gridSize,
+                    this.food.y * this.gridSize,
+                    this.gridSize - 2,
+                    this.gridSize - 2
+                );
+            }
+        }
+
+        class RLAgent {
+            constructor() {
+                this.loadParams();
+                this.loadQTable('default');
+            }
+
+            loadParams() {
+                this.alpha = parseFloat(alpha.value);
+                this.gamma = parseFloat(gamma.value);
+                this.epsilon = parseFloat(epsilon.value);
+                this.epsilonDecay = parseFloat(epsilonDecay.value);
+                this.saveParams();
+            }
+
+            saveParams() {
+                localStorage.setItem(`${this.currentModel}_params`, JSON.stringify({
+                    alpha: this.alpha,
+                    gamma: this.gamma,
+                    epsilon: this.epsilon,
+                    epsilonDecay: this.epsilonDecay
+                }));
+            }
+
+            loadQTable(modelName) {
+                this.currentModel = modelName;
+                this.qTable = JSON.parse(localStorage.getItem(modelName)) || {};
+                const params = JSON.parse(localStorage.getItem(`${modelName}_params`));
+                if (params) {
+                    this.alpha = params.alpha;
+                    this.gamma = params.gamma;
+                    this.epsilon = params.epsilon;
+                    this.epsilonDecay = params.epsilonDecay;
+                    updateParamInputs(params);
+                }
+            }
+
+            saveQTable() {
+                localStorage.setItem(this.currentModel, JSON.stringify(this.qTable));
+                this.saveParams();
+            }
+
+            getAction(state, training = true) {
+                if (training && Math.random() < this.epsilon) {
+                    return Math.floor(Math.random() * 4);
+                }
+                return this.qTable[state] ? this.qTable[state].indexOf(Math.max(...this.qTable[state])) : 0;
+            }
+
+            learn(state, action, reward, nextState) {
+                if (!this.qTable[state]) this.qTable[state] = [0, 0, 0, 0];
+                if (!this.qTable[nextState]) this.qTable[nextState] = [0, 0, 0, 0];
+                
+                const predict = this.qTable[state][action];
+                const target = reward + this.gamma * Math.max(...this.qTable[nextState]);
+                this.qTable[state][action] += this.alpha * (target - predict);
+            }
+
+            decayEpsilon() {
+                this.epsilon = Math.max(0.01, this.epsilon * this.epsilonDecay);
+            }
+        }
+
+        function saveModel() {
+            const modelName = document.getElementById('modelName').value || `model_${Date.now()}`;
+            agent.currentModel = modelName;
+            agent.saveQTable();
+            updateModelList();
+        }
+
+        function loadModel(modelName) {
+            agent.loadQTable(modelName);
+            epsilonValue.textContent = agent.epsilon.toFixed(2);
+        }
+
+        function updateModelList() {
+            const select = document.getElementById('savedModels');
+            select.innerHTML = Object.keys(localStorage)
+                .filter(k => !k.endsWith('_params'))
+                .map(k => `<option>${k}</option>`);
+        }
+
+        function updateParamInputs(params) {
+            alpha.value = params.alpha;
+            gamma.value = params.gamma;
+            epsilon.value = params.epsilon;
+            epsilonDecay.value = params.epsilonDecay;
+        }
+
+        const agent = new RLAgent();
+        const game = new SnakeGame(document.getElementById('gameCanvas'));
+        const playGame = new SnakeGame(document.getElementById('playCanvas'));
+        let playInterval = null;
+        let isPlaying = false;
+
+        const scoreElement = document.getElementById('score');
+        const highScoreElement = document.getElementById('highScore');
+        const gamesPlayedElement = document.getElementById('gamesPlayed');
+        const epsilonValue = document.getElementById('epsilonValue');
+        const playScoreElement = document.getElementById('playScore');
+        const playHighScoreElement = document.getElementById('playHighScore');
+        const trainSpeed = document.getElementById('trainSpeed');
+        const playSpeed = document.getElementById('playSpeed');
+
+        let highScore = 0;
+        let gamesPlayed = 0;
+        let playHighScore = 0;
+        let trainInterval = null;
+
+        [alpha, gamma, epsilon, epsilonDecay].forEach(input => {
+            input.addEventListener('change', () => {
+                agent.loadParams();
+                epsilonValue.textContent = agent.epsilon.toFixed(2);
+            });
+        });
+
+        document.getElementById('playButton').addEventListener('click', () => {
+            isPlaying = !isPlaying;
+            document.getElementById('playButton').textContent = isPlaying ? '⏹ Stop Play' : '▶ Start Play';
+            
+            if (isPlaying) {
+                playGame.reset();
+                playInterval = setInterval(playLoop, playSpeed.value);
+            } else {
+                clearInterval(playInterval);
+            }
+        });
+
+        trainSpeed.addEventListener('input', () => {
+            clearInterval(trainInterval);
+            trainInterval = setInterval(gameLoop, trainSpeed.value);
+        });
+
+        playSpeed.addEventListener('input', () => {
+            if (isPlaying) {
+                clearInterval(playInterval);
+                playInterval = setInterval(playLoop, playSpeed.value);
+            }
+        });
+
+        
+        function gameLoop() {
+            if (game.gameOver) {
+                gamesPlayed++;
+                gamesPlayedElement.textContent = gamesPlayed;
+                if (game.score > highScore) {
+                    highScore = game.score;
+                    highScoreElement.textContent = highScore;
+                }
+                agent.decayEpsilon();
+                epsilonValue.textContent = agent.epsilon.toFixed(2);
+                game.reset();
+            }
+
+            const state = game.getState();
+            const action = agent.getAction(state);
+            const reward = game.step(action);
+            const nextState = game.getState();
+            
+            agent.learn(state, action, reward, nextState);
+            game.draw();
+            scoreElement.textContent = game.score;
+
+            agent.saveQTable();
+        }
+
+        function playLoop() {
+            if (playGame.gameOver) {
+                if (playGame.score > playHighScore) {
+                    playHighScore = playGame.score;
+                    playHighScoreElement.textContent = playHighScore;
+                }
+                playGame.reset();
+            }
+
+            const state = playGame.getState();
+            const action = agent.getAction(state, false);
+            playGame.step(action);
+            playGame.draw();
+            playScoreElement.textContent = playGame.score;
+        }
+
+    
+        updateModelList();
+        trainInterval = setInterval(gameLoop, trainSpeed.value);
+        epsilonValue.textContent = agent.epsilon.toFixed(2);
+    </script>
+</body>
